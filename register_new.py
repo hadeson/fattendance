@@ -6,30 +6,26 @@ import time
 import os
 import pickle
 import numpy as np
-from face_det import face_detect_mobile as face_detect
-# from face_rec import face_embed_lite as face_embed
+import configparser
+import pymongo
+from mbnfacedet import MobileFaceDetect
 from arcface import FaceEmbedding
 from face_search import bruteforce
-from utils import initModel, area, loadData
+from utils import initModel, area, loadMongoData
 from openvino.inference_engine import IENetwork, IEPlugin
 
 def main():
     cam = cv2.VideoCapture(0)
     # load data
-    data_dir= "data"
-    # embed_file_path = "data/embed.pkl"
-    embed_file = os.path.join(data_dir, "embed.pkl")
-    face_database = loadData(embed_file)
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    face_database, face_collection = loadMongoData(config)
     # load models
-    fe_model_xml = "models/face-reidentification-retail-0095.xml"
-    fe_model_bin = "models/face-reidentification-retail-0095.bin"
-    fd_model_xml = "models/face-detection-retail-0005.xml"
-    fd_model_bin = "models/face-detection-retail-0005.bin"
     device = "MYRIAD"
+    data_dir = "data"
     plugin = IEPlugin(device, plugin_dirs=None)
-    fd_net, fd_input_blob, _ = initModel(fd_model_xml, fd_model_bin, plugin)
-    # fe_net, fe_input_blob, _ = initModel(fe_model_xml, fe_model_bin, plugin)
     face_embed = FaceEmbedding(plugin)
+    face_detect = MobileFaceDetect(plugin)
     # params
     fd_conf = 0.5
     fm_threshold = 0.6
@@ -55,7 +51,7 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord('c'):
             button_pressed = True
         if button_pressed and (num < max_num):
-            face_bboxes = face_detect(frame, fd_net, fd_input_blob, fd_conf)
+            face_bboxes = face_detect.inference(frame)
         if (len(face_bboxes) > 0) and button_pressed:
             areas = [area(box) for box in face_bboxes]
             max_id = np.argmax(np.asarray(areas))
@@ -64,11 +60,7 @@ def main():
             # TODO real face detection
             # TODO face alignment
             face_feature = face_embed.inference(main_face)
-            # best_match = bruteforce(face_feature, face_database, fm_threshold)
-            # if best_match is None:
-            #     label = "new"
-            # else:
-            #     label = str(best_match['id'])
+            face_feature = face_feature.tolist()
             face_features.append(face_feature)
             face_imgs.append(main_face)
             num += 1
@@ -81,13 +73,17 @@ def main():
             print(num)
 
         if num >= max_num:
-            new_id = len(face_database)
+            # add new face features to database
+            new_id = face_database.count()
             new_face = {
-                'id': new_id,
+                'name': str(new_id),
                 'feats': face_features
             }
-            face_database.append(new_face)
-            pickle.dump(face_database, open(embed_file, "wb"))
+            p_id = face_collection.insert_one(new_face).inserted_id
+            # commit changes
+            face_collection.update_one({'_id': p_id}, {"$set": new_face}, upsert=False)
+
+            # save images
             img_dir = os.path.join(data_dir, str(new_id))
             os.mkdir(img_dir)
             for i, face in enumerate(face_imgs):
