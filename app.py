@@ -4,6 +4,8 @@ import time
 import numpy as np
 import cv2
 import ast
+import requests, json
+import socket
 from bson import ObjectId
 from pymongo import MongoClient
 from datetime import datetime
@@ -29,16 +31,24 @@ class FaceRecognition(object):
         self.head_pose = HeadPoseEst(plugin)
         self.ch = int(config["CAMERA"]['Height'])
         self.cw = int(config["CAMERA"]['Width'])
+        self.door_host = config["DOOR_CONTROLLER"]['Host']
+        self.door_port = int(config["DOOR_CONTROLLER"]['Port'])
+        self.door_name = config["DOOR_CONTROLLER"]['Name']
+        self.door_url = "http://{}:{}{}".format(self.door_host, self.door_name, self.door_port)
+        self.open_door_signal = config["DOOR_CONTROLLER"]['Open_door_signal']
+        self.open_door_signal = self.open_door_signal.encode()
+        
         self.face_min_size = float(config["FACE_CONSOLIDATION"]['Face_min_ratio']) * (self.ch*self.cw)
         self.face_margin = int(config["FACE_CONSOLIDATION"]['Face_margin'])
         self.fm_threshold = float(config["FACE_MATCH"]['Face_threshold'])
-        self.face_counter = int(config["FACE_MATCH"]['Counter'])
-        self.ct_threshold = float(config["FACE_MATCH"]['Counter_threshold'])
+        # self.face_counter = int(config["FACE_MATCH"]['Counter'])
+        # self.ct_threshold = float(config["FACE_MATCH"]['Counter_threshold'])
         self.debug = int(config["FACE_MATCH"]['Debug'])
         self.no_face_frame_limit = int(config["DELAY"]['No_face_frame'])
         self.recognition_delay = float(config["DELAY"]['Recognition_delay'])
         self.angle_min = ast.literal_eval(config["HEAD_POSE"]["Angle_min"])
         self.angle_max = ast.literal_eval(config["HEAD_POSE"]["Angle_max"])
+        self.window_mult = float(config["DISPLAY"]['Window_mult'])
         self.log_img_dir = config["IMAGE_DIR"]['Log']
         if not os.path.exists(self.log_img_dir):
             os.mkdir(self.log_img_dir)
@@ -53,14 +63,16 @@ class FaceRecognition(object):
             ret, frame = cam.read()
             if not ret:
                 # dead cam
-                cv2.destroyAllWindows()
-                return 1
+                cam = cv2.VideoCapture(0)
+                continue
+                # cv2.destroyAllWindows()
+                # return 1
+
             # go from standby to face detection phase
-            # TODO change press key trigger to client-server trigger (e.g. IR sensor)
-            if no_face_frame > self.no_face_frame_limit:
-                # no error
-                cv2.destroyAllWindows()
-                return 0
+            # if no_face_frame > self.no_face_frame_limit:
+            #     # no error
+            #     cv2.destroyAllWindows()
+            #     return 0
             # face detection phase
             face_bboxes = self.face_detect.inference(frame)
             if len(face_bboxes) > 0:
@@ -78,7 +90,6 @@ class FaceRecognition(object):
                     main_head = frame[y0:y1, x0:x1, :]
                     yaw, pitch, roll = self.head_pose.inference(main_head)
                     if not good_head_angle(yaw, pitch, roll, self.angle_min, self.angle_max):
-                        # TODO: indicate on screen
                         cv2.rectangle(frame, (mfb[0], mfb[1]), (mfb[2], mfb[3]), (255, 0, 0), 2)
                         label = "please look at the camera"
                         text_color = (0, 255, 0)
@@ -112,6 +123,7 @@ class FaceRecognition(object):
                     best_match = bruteforce(face_feature, self.face_database, self.fm_threshold)
                     # TODO face record
                     if best_match is None:
+                        # self.callDoorControllerPost(1)
                         new_log = {
                             'result': 'failed',
                             'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -119,6 +131,8 @@ class FaceRecognition(object):
                         self.updateLog(new_log, main_face)
                         label = "{}".format("Verification failed")
                     else:
+                        # self.callDoorControllerPost(0)
+                        self.callDoorControllerSocket()
                         new_log = {
                             'result': 'success',
                             'face_id': best_match['_id'],
@@ -137,7 +151,7 @@ class FaceRecognition(object):
                                         0.6, text_color, lineType=cv2.LINE_AA)
             else:
                 no_face_frame += 1
-                print(no_face_frame, "/", self.no_face_frame_limit)
+                # print(no_face_frame, "/", self.no_face_frame_limit)
 
             cv2.imshow("gandalf", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -187,3 +201,29 @@ class FaceRecognition(object):
         # print(new_img_path)
         cv2.imwrite(new_img_path, face_img)
         return p_id
+
+    def callDoorControllerPost(self, signal):
+        body = {
+            'signal': signal,
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        header = {"Content-type": "application/x-www-form-urlencoded",
+                "Accept": "text/plain"} 
+        body_json = json.dumps(body)
+        r = requests.post(self.door_url, data=body_json, headers=header)
+        print(r.json())
+
+    def callDoorControllerSocket(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((self.door_host, self.door_port))
+            while (True):
+                s.sendall(self.open_door_signal)
+                data = s.recv(1024)
+                data_str = data.decode('utf-8')
+                if data_str == 'ok':
+                    break
+
+
+if __name__ == '__main__':
+    face_recog = FaceRecognition()
+    face_recog.serve()
