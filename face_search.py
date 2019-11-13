@@ -14,7 +14,7 @@ def bruteforce(qfe, fdb, threshold):
             feat_np = np.asarray(feat)
             # print(feat_np)
             cos_dst = cosineDistance(qfe, feat_np)
-            print(cos_dst)
+            # print(cos_dst)
             if (cos_dst <= threshold) and (cos_dst < min_dst):
                 min_dst = cos_dst
                 best_match = doc

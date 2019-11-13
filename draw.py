@@ -12,7 +12,7 @@ class DisplayDraw(object):
         self.last_text = "Hello, I'm Miris"
         self.last_text_setting = self.indicator_text_setting
 
-    def drawText(self, frame, text, text_setting):
+    def drawText(self, frame, text, text_setting, tech_zone=0):
         """
         "Look at camera" text and face bounding box
         """
@@ -25,10 +25,16 @@ class DisplayDraw(object):
         text_size = cv2.getTextSize(text, ts['fontFace'], ts['fontScale'], 
                                     ts['thickness'])
         # print(text_size, screen_width)
-        text_position = (
-            int((screen_width / 2) - (text_size[0][0] / 2)), 
-            int(screen_height - 25)
-        )
+        if tech_zone == 0:
+            text_position = (
+                int((screen_width / 2) - (text_size[0][0] / 2)), 
+                int(screen_height - 25)
+            )
+        elif tech_zone == 1:
+            text_position = (
+                int((screen_width / 2) - (text_size[0][0] / 2)), 
+                int(25)
+            )
         # print(text_position)
         # print(ts)
         cv2.putText(
@@ -57,7 +63,7 @@ class DisplayDraw(object):
         return frame
 
     def drawLACText(self, frame):
-        text = "Please look at the camera below"
+        text = "Please look at the camera"
         ts = self.indicator_text_setting
         ts['color'] = (255, 255, 255) # white
         frame = self.drawText(frame, text, ts)
@@ -79,4 +85,10 @@ class DisplayDraw(object):
 
     def drawLastText(self, frame):
         return self.drawText(frame, self.last_text, self.last_text_setting)
+
+    def drawFaceAtts(self, frame, emotion, age, gender):
+        ts = self.indicator_text_setting
+        ts['color'] = (255, 255, 255) # white
+        text = f"{gender}, {age}, Cam xuc: {emotion}"
+        return self.drawText(frame, text, ts, tech_zone=1)
 
